@@ -7,14 +7,14 @@ from unittest.mock import patch, MagicMock
 # Ensure project root is importable
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from core.utils import clean_text, get_similarity_ratio, DEFAULT_CONFIG, load_config, save_config
+from core.utils import clean_text, get_similarity_ratio, DEFAULT_CONFIG, load_config, save_config, find_js_runtimes
 from core.playlist_extractor import (
     detect_platform,
     extract_playlist_id,
     _extract_spotify_resource,
     _parse_iso8601_duration,
 )
-from core.downloader import sanitize_filename
+from core.downloader import sanitize_filename, download_track, DownloadCancelled
 from core.updater import parse_semver, is_newer_version, _select_windows_asset, check_for_updates
 from core.yt_matcher import find_best_match
 from core.orchestrator import orchestrate_download
@@ -166,13 +166,14 @@ class TestUpdater(unittest.TestCase):
 
 
 class TestOrchestratorSafety(unittest.TestCase):
+    @patch("core.orchestrator.ensure_js_runtime", return_value={})
     @patch("core.orchestrator.ensure_ffmpeg", return_value=("ffmpeg.exe", "."))
     @patch("core.orchestrator.download_track")
     @patch("core.orchestrator.find_best_match")
     @patch("core.orchestrator.scan_local_mp3s")
     @patch("core.orchestrator.get_playlist_tracks_general")
     def test_failed_upgrade_does_not_delete_existing_local_file(
-        self, mock_extract, mock_scan, mock_match, mock_dl, _mock_ffmpeg
+        self, mock_extract, mock_scan, mock_match, mock_dl, _mock_ffmpeg, _mock_js
     ):
         with tempfile.TemporaryDirectory() as tmpdir:
             existing_file = os.path.join(tmpdir, "Daft Punk - One More Time.mp3")
@@ -209,13 +210,16 @@ class TestOrchestratorSafety(unittest.TestCase):
             self.assertEqual(summary.failed, 1)
             self.assertEqual(summary.upgraded, 0)
 
+    @patch("core.orchestrator.ensure_js_runtime", return_value={})
     @patch("core.orchestrator.ensure_ffmpeg", return_value=("ffmpeg.exe", "."))
     @patch("core.orchestrator.apply_metadata")
     @patch("core.orchestrator.download_track")
     @patch("core.orchestrator.find_best_match")
     @patch("core.orchestrator.scan_local_mp3s")
     @patch("core.orchestrator.get_playlist_tracks_general")
-    def test_skip_mode_never_overwrites(self, mock_extract, mock_scan, mock_match, mock_dl, mock_tag, _mock_ffmpeg):
+    def test_skip_mode_never_overwrites(
+        self, mock_extract, mock_scan, mock_match, mock_dl, mock_tag, _mock_ffmpeg, _mock_js
+    ):
         with tempfile.TemporaryDirectory() as tmpdir:
             existing_file = os.path.join(tmpdir, "Artist - Song.mp3")
             mock_extract.return_value = [{
@@ -243,6 +247,99 @@ class TestOrchestratorSafety(unittest.TestCase):
             self.assertEqual(summary.skipped, 1)
             mock_match.assert_not_called()
             mock_dl.assert_not_called()
+
+
+class TestDownloaderResilience(unittest.TestCase):
+    @patch("core.downloader.time.sleep")
+    @patch("core.downloader.find_js_runtimes", return_value={"quickjs": {"path": "C:/bin/qjs.exe"}})
+    @patch("core.downloader.find_ffmpeg", return_value=("C:/bin/ffmpeg.exe", "C:/bin"))
+    @patch("core.downloader.yt_dlp.YoutubeDL")
+    def test_download_track_rotates_client_after_http_403(
+        self, mock_ydl_cls, _mock_ffmpeg, _mock_js, _mock_sleep
+    ):
+        captured_opts = []
+
+        def ydl_factory(opts):
+            captured_opts.append(opts)
+            cm = MagicMock()
+            instance = MagicMock()
+
+            def fake_download(_urls):
+                if len(captured_opts) == 1:
+                    raise Exception("ERROR: unable to download video data: HTTP Error 403: Forbidden")
+                # Second attempt succeeds and writes expected mp3
+                out_mp3 = opts["outtmpl"].replace(".%(ext)s", ".mp3")
+                with open(out_mp3, "wb") as f:
+                    f.write(b"ID3_FAKE_MP3")
+
+            instance.download.side_effect = fake_download
+            cm.__enter__.return_value = instance
+            cm.__exit__.return_value = False
+            return cm
+
+        mock_ydl_cls.side_effect = ydl_factory
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            logs = []
+            mp3_path = download_track(
+                video_id="oMT_FP07Pzo",
+                output_dir=tmpdir,
+                track_index=0,
+                track_title="Mi Tche Mwen",
+                preferred_quality="320",
+                progress_callback=None,
+                log_cb=logs.append,
+            )
+            self.assertTrue(os.path.exists(mp3_path))
+            self.assertEqual(len(captured_opts), 2)
+            # First attempt passes detected JS runtime
+            self.assertEqual(captured_opts[0]["js_runtimes"], {"quickjs": {"path": "C:/bin/qjs.exe"}})
+            # Second attempt switches YouTube player_client and bypasses stale cache
+            self.assertEqual(
+                captured_opts[1]["extractor_args"]["youtube"]["player_client"],
+                ["tv_samsung"],
+            )
+            self.assertIs(captured_opts[1]["cachedir"], False)
+            self.assertTrue(any("[FALLBACK]" in m for m in logs))
+
+    @patch("core.downloader.time.sleep")
+    @patch("core.downloader.find_js_runtimes", return_value={})
+    @patch("core.downloader.find_ffmpeg", return_value=("C:/bin/ffmpeg.exe", "C:/bin"))
+    @patch("core.downloader.yt_dlp.YoutubeDL")
+    def test_download_track_does_not_retry_on_cancel_or_private_video(
+        self, mock_ydl_cls, _mock_ffmpeg, _mock_js, _mock_sleep
+    ):
+        cm = MagicMock()
+        instance = MagicMock()
+        instance.download.side_effect = DownloadCancelled("cancelled")
+        cm.__enter__.return_value = instance
+        cm.__exit__.return_value = False
+        mock_ydl_cls.return_value = cm
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            with self.assertRaises(DownloadCancelled):
+                download_track("vid123", tmpdir, 0, "Title", "320", None)
+            self.assertEqual(mock_ydl_cls.call_count, 1)
+
+        mock_ydl_cls.reset_mock()
+        instance.download.side_effect = Exception("ERROR: [youtube] vid123: Private video.")
+        with tempfile.TemporaryDirectory() as tmpdir:
+            with self.assertRaises(Exception):
+                download_track("vid123", tmpdir, 0, "Title", "320", None)
+            self.assertEqual(mock_ydl_cls.call_count, 1)
+
+    @patch("core.utils._find_local_binary")
+    def test_find_js_runtimes_detects_supported_binaries(self, mock_find_bin):
+        def fake_bin(name):
+            if name in ("qjs.exe", "qjs"):
+                return "/bin/qjs"
+            if name in ("node.exe", "node"):
+                return "/bin/node"
+            return None
+
+        mock_find_bin.side_effect = fake_bin
+        runtimes = find_js_runtimes()
+        self.assertEqual(runtimes, {"quickjs": {"path": "/bin/qjs"}, "node": {"path": "/bin/node"}})
 
 
 if __name__ == "__main__":

@@ -2,7 +2,7 @@
 ; Builds a clean, standard Windows installer (no self-extracting temp dropper heuristics)
 
 #define MyAppName "DjaelYTPlaylistDWNLD"
-#define MyAppVersion "3.1.0"
+#define MyAppVersion "3.1.1"
 #define MyAppPublisher "djael-ml"
 #define MyAppURL "https://github.com/djael-ml/DjaelYTPlaylistDWNLD"
 #define MyAppExeName "DjaelYTPlaylistDWNLD.exe"

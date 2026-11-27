@@ -14,7 +14,16 @@ except ImportError:
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from core.version import __app_name__, __version__, GITHUB_REPO_URL
-from core.utils import load_config, save_config, get_resource_path, find_ffmpeg, ensure_ffmpeg, setup_logging
+from core.utils import (
+    load_config,
+    save_config,
+    get_resource_path,
+    find_ffmpeg,
+    ensure_ffmpeg,
+    find_js_runtimes,
+    ensure_js_runtime,
+    setup_logging,
+)
 from core.playlist_extractor import detect_platform
 from core.orchestrator import orchestrate_download
 from core.updater import (
@@ -138,12 +147,18 @@ class DjaelYTPlaylistDWNLD(_CTK_BASE):
         self.protocol("WM_DELETE_WINDOW", self._on_close_window)
         self.after(80, self._poll_queue)
         self.after(1400, lambda: self._start_update_check(force=False))
-        if not find_ffmpeg()[0]:
-            threading.Thread(target=self._prewarm_ffmpeg, daemon=True).start()
+        if not find_ffmpeg()[0] or not find_js_runtimes():
+            threading.Thread(target=self._prewarm_runtimes, daemon=True).start()
 
-    def _prewarm_ffmpeg(self):
+    def _prewarm_runtimes(self):
         try:
-            ensure_ffmpeg()
+            if not find_ffmpeg()[0]:
+                ensure_ffmpeg()
+        except Exception:
+            pass
+        try:
+            if not find_js_runtimes():
+                ensure_js_runtime()
         except Exception:
             pass
 

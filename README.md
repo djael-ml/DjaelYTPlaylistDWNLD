@@ -20,6 +20,7 @@ Developed by **djael-ml** (GitHub: [github.com/djael-ml](https://github.com/djae
   - **Apple Music**: Hydrated JSON / JSON-LD extraction (playlists, albums, songs).
   - **SoundCloud**: Fast `yt-dlp` flat extraction + batch v2 metadata resolution.
   - **YouTube & YouTube Music**: Direct `videoId` bypass (no redundant search).
+- **Resilient YouTube Extraction**: Bundles `yt-dlp[default]` (`yt-dlp-ejs`), automatically detects or installs a lightweight QuickJS runtime (~1.8 MB) into `%APPDATA%\DjaelYTPlaylistDWNLD\bin`, and rotates YouTube player clients automatically if `googlevideo.com` returns `HTTP Error 403: Forbidden`.
 - **Safe Atomic Upgrades**: Existing MP3s are never deleted before their replacement has been downloaded and tagged.
 - **GitHub Auto-Update Checker**: Non-blocking startup check against GitHub Releases (with ETag caching, rate-limit fallback, release notes viewer, and self-updating `.exe` support).
 - **Rich ID3v2.3 Metadata**: Embeds Title, Artist, Album Artist, Album, Track Number, Year, and converted JPEG/PNG front-cover artwork for full Windows Explorer & player compatibility.

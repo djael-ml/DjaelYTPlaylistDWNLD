@@ -12,6 +12,12 @@ from mutagen.mp3 import MP3
 from core.version import __app_name__
 
 _ffmpeg_install_lock = threading.Lock()
+_js_runtime_install_lock = threading.Lock()
+
+QUICKJS_WIN64_URLS = (
+    "https://github.com/quickjs-ng/quickjs/releases/latest/download/qjs-windows-x86_64.exe",
+    "https://github.com/quickjs-ng/quickjs/releases/download/v0.18.0/qjs-windows-x86_64.exe",
+)
 
 DEFAULT_CONFIG = {
     "spotify_client_id": "",
@@ -251,6 +257,106 @@ def ensure_ffmpeg(log_cb=None, progress_cb=None):
         if log_cb:
             log_cb("[FFMPEG] FFmpeg prêt !")
         return ffmpeg_exe, ffmpeg_dir
+
+
+def _find_local_binary(binary_name):
+    """Locate a helper binary in bundled resources, next to the exe, AppData/bin, or PATH."""
+    local_exe = get_resource_path(binary_name)
+    if os.path.isfile(local_exe):
+        return local_exe
+
+    if getattr(sys, "frozen", False):
+        exe_dir = os.path.dirname(os.path.abspath(sys.executable))
+        sibling_exe = os.path.join(exe_dir, binary_name)
+        if os.path.isfile(sibling_exe):
+            return sibling_exe
+
+    appdata_exe = os.path.join(get_app_data_dir(), "bin", binary_name)
+    if os.path.isfile(appdata_exe):
+        return appdata_exe
+
+    path_exe = shutil.which(binary_name)
+    if path_exe and os.path.isfile(path_exe):
+        return path_exe
+
+    return None
+
+
+def find_js_runtimes():
+    """
+    Detect available JavaScript runtimes supported by yt-dlp's YouTube EJS solver
+    (Deno, QuickJS / QuickJS-NG, Node.js, Bun).
+    Returns a dict ready for yt-dlp's `js_runtimes` option, e.g.:
+        {'quickjs': {'path': '.../qjs.exe'}, 'node': {'path': '.../node.exe'}}
+    """
+    is_win = sys.platform == "win32"
+    candidates = [
+        ("deno", ("deno.exe",) if is_win else ("deno",)),
+        ("quickjs", ("qjs.exe", "qjs-ng.exe") if is_win else ("qjs", "qjs-ng")),
+        ("node", ("node.exe",) if is_win else ("node",)),
+        ("bun", ("bun.exe",) if is_win else ("bun",)),
+    ]
+    runtimes = {}
+    for runtime_key, names in candidates:
+        for name in names:
+            found = _find_local_binary(name)
+            if found:
+                runtimes[runtime_key] = {"path": found}
+                break
+    return runtimes
+
+
+def ensure_js_runtime(log_cb=None):
+    """
+    Ensure at least one yt-dlp-compatible JS runtime is available (thread-safe, non-fatal).
+    On Windows, if neither Deno, QuickJS, Node.js nor Bun is present, downloads the
+    lightweight (~1.8 MB) QuickJS-NG standalone executable into %APPDATA%\\DjaelYTPlaylistDWNLD\\bin\\qjs.exe
+    so yt-dlp can solve YouTube's JS player challenges and avoid HTTP 403 blocks.
+    Returns the `js_runtimes` dict (may be empty if offline/unavailable).
+    """
+    runtimes = find_js_runtimes()
+    if runtimes:
+        return runtimes
+
+    if sys.platform != "win32":
+        return runtimes
+
+    with _js_runtime_install_lock:
+        runtimes = find_js_runtimes()
+        if runtimes:
+            return runtimes
+
+        import requests
+
+        dest_dir = os.path.join(get_app_data_dir(), "bin")
+        os.makedirs(dest_dir, exist_ok=True)
+        qjs_dest = os.path.join(dest_dir, "qjs.exe")
+        tmp_dest = f"{qjs_dest}.tmp"
+
+        if log_cb:
+            log_cb("[JS] Installation automatique de QuickJS (~1.8 Mo) pour débloquer YouTube...")
+
+        for url in QUICKJS_WIN64_URLS:
+            try:
+                with requests.get(url, stream=True, timeout=30) as resp:
+                    resp.raise_for_status()
+                    with open(tmp_dest, "wb") as f:
+                        for chunk in resp.iter_content(chunk_size=65536):
+                            if chunk:
+                                f.write(chunk)
+                if os.path.isfile(tmp_dest) and os.path.getsize(tmp_dest) > 100_000:
+                    os.replace(tmp_dest, qjs_dest)
+                    if log_cb:
+                        log_cb("[JS] QuickJS prêt !")
+                    return find_js_runtimes()
+            except Exception:
+                if os.path.exists(tmp_dest):
+                    try:
+                        os.remove(tmp_dest)
+                    except OSError:
+                        pass
+
+        return find_js_runtimes()
 
 
 def levenshtein_distance(s1, s2):

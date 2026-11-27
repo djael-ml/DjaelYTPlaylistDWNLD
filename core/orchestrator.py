@@ -7,7 +7,14 @@ from core.playlist_extractor import detect_platform, get_playlist_tracks_general
 from core.yt_matcher import find_best_match
 from core.downloader import download_track, sanitize_filename, DownloadCancelled
 from core.tagger import apply_metadata
-from core.utils import scan_local_mp3s, clean_text, get_similarity_ratio, setup_logging, ensure_ffmpeg
+from core.utils import (
+    scan_local_mp3s,
+    clean_text,
+    get_similarity_ratio,
+    setup_logging,
+    ensure_ffmpeg,
+    ensure_js_runtime,
+)
 
 BITRATE_TOLERANCE_KBPS = 8
 
@@ -97,6 +104,7 @@ def orchestrate_download(
 
     os.makedirs(output_dir, exist_ok=True)
     ensure_ffmpeg(log_cb=log, progress_cb=progress_cb)
+    ensure_js_runtime(log_cb=log)
     target_bitrate = int(bitrate)
     workers = max(1, min(8, int(max_workers or 1)))
     mode = overwrite_mode if overwrite_mode in ("upgrade", "replace", "skip") else "upgrade"
@@ -234,6 +242,7 @@ def orchestrate_download(
                 preferred_quality=target_bitrate,
                 progress_callback=dl_progress,
                 stop_check_cb=stop_check_cb,
+                log_cb=log,
             )
         except DownloadCancelled:
             log(f"{prefix} [STOP] Track download cancelled.")

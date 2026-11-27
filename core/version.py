@@ -1,7 +1,7 @@
 """Application version and GitHub repository metadata."""
 
 __app_name__ = "DjaelYTPlaylistDWNLD"
-__version__ = "3.1.0"
+__version__ = "3.1.1"
 
 GITHUB_OWNER = "djael-ml"
 GITHUB_REPO = "DjaelYTPlaylistDWNLD"

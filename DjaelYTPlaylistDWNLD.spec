@@ -9,14 +9,14 @@ for asset in ("logo.ico", "logo.png"):
     if os.path.exists(asset):
         datas.append((asset, "."))
 
-# Collect runtime data assets (themes, locales, CA certificates)
-for pkg in ("customtkinter", "ytmusicapi", "certifi"):
+# Collect runtime data assets (themes, locales, CA certificates, yt-dlp EJS challenge solvers)
+for pkg in ("customtkinter", "ytmusicapi", "certifi", "yt_dlp_ejs"):
     try:
         datas += collect_data_files(pkg)
     except Exception:
         pass
 
-# FFmpeg is installed automatically once into %APPDATA%\DjaelYTPlaylistDWNLD\bin
+# FFmpeg & QuickJS are installed automatically once into %APPDATA%\DjaelYTPlaylistDWNLD\bin
 binaries = []
 
 hiddenimports = [
@@ -32,11 +32,14 @@ hiddenimports = [
     "mutagen.id3",
     "requests",
     "certifi",
+    "yt_dlp_ejs",
+    "curl_cffi",
 ]
-try:
-    hiddenimports += collect_submodules("yt_dlp.extractor")
-except Exception:
-    pass
+for mod in ("yt_dlp.extractor", "yt_dlp.networking", "yt_dlp_ejs"):
+    try:
+        hiddenimports += collect_submodules(mod)
+    except Exception:
+        pass
 
 a = Analysis(
     ["main.py"],
