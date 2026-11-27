@@ -1,0 +1,122 @@
+name: Build & Release Windows Application
+
+on:
+  push:
+    tags:
+      - "v*.*.*"
+      - "*.*.*"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  id-token: write
+  attestations: write
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies & PyInstaller
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt pyinstaller
+
+      - name: Run unit tests
+        run: python -m unittest discover -s tests -v
+
+      - name: Build application (--onedir with PE version metadata)
+        run: pyinstaller DjaelYTPlaylistDWNLD.spec --clean --noconfirm
+
+      # Optional: Automatic legitimate Code Signing via Azure Trusted Signing
+      # Add AZURE_TENANT_ID, AZURE_CLIENT_ID, AZURE_CLIENT_SECRET, TRUSTED_SIGNING_* secrets to enable.
+      - name: Sign executable (Azure Trusted Signing, if configured)
+        if: ${{ vars.TRUSTED_SIGNING_ENDPOINT != '' }}
+        uses: azure/trusted-signing-action@v0.5.9
+        with:
+          azure-tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          azure-client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          azure-client-secret: ${{ secrets.AZURE_CLIENT_SECRET }}
+          endpoint: ${{ vars.TRUSTED_SIGNING_ENDPOINT }}
+          trusted-signing-account-name: ${{ vars.TRUSTED_SIGNING_ACCOUNT }}
+          certificate-profile-name: ${{ vars.TRUSTED_SIGNING_PROFILE }}
+          files-folder: dist/DjaelYTPlaylistDWNLD
+          files-folder-filter: DjaelYTPlaylistDWNLD.exe
+          file-digest: SHA256
+          timestamp-rfc3161: http://timestamp.acs.microsoft.com
+          timestamp-digest: SHA256
+
+      - name: Build Windows Installer (Inno Setup)
+        shell: pwsh
+        run: |
+          $iscc = "C:\Program Files (x86)\Inno Setup 6\ISCC.exe"
+          if (Test-Path $iscc) {
+            & $iscc installer.iss
+          } else {
+            choco install innosetup -y
+            & "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" installer.iss
+          }
+
+      - name: Sign installer (Azure Trusted Signing, if configured)
+        if: ${{ vars.TRUSTED_SIGNING_ENDPOINT != '' }}
+        uses: azure/trusted-signing-action@v0.5.9
+        with:
+          azure-tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          azure-client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          azure-client-secret: ${{ secrets.AZURE_CLIENT_SECRET }}
+          endpoint: ${{ vars.TRUSTED_SIGNING_ENDPOINT }}
+          trusted-signing-account-name: ${{ vars.TRUSTED_SIGNING_ACCOUNT }}
+          certificate-profile-name: ${{ vars.TRUSTED_SIGNING_PROFILE }}
+          files-folder: dist
+          files-folder-filter: DjaelYTPlaylistDWNLD-Setup-*.exe
+          file-digest: SHA256
+          timestamp-rfc3161: http://timestamp.acs.microsoft.com
+          timestamp-digest: SHA256
+
+      - name: Package portable ZIP archive
+        shell: pwsh
+        run: |
+          Compress-Archive -Path dist/DjaelYTPlaylistDWNLD -DestinationPath dist/DjaelYTPlaylistDWNLD-win64-portable.zip -Force
+
+      - name: Generate SHA256 checksums
+        shell: pwsh
+        run: |
+          $files = Get-ChildItem dist -File | Where-Object { $_.Extension -in '.exe', '.zip' }
+          $lines = foreach ($f in $files) {
+            $h = (Get-FileHash $f.FullName -Algorithm SHA256).Hash.ToLower()
+            "$h  $($f.Name)"
+          }
+          $lines | Out-File -Encoding ascii dist/SHA256SUMS.txt
+
+      - name: Attest Build Provenance (SLSA)
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: |
+            dist/DjaelYTPlaylistDWNLD-Setup-*.exe
+            dist/DjaelYTPlaylistDWNLD-win64-portable.zip
+
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: DjaelYTPlaylistDWNLD-windows
+          path: |
+            dist/DjaelYTPlaylistDWNLD-Setup-*.exe
+            dist/DjaelYTPlaylistDWNLD-win64-portable.zip
+            dist/SHA256SUMS.txt
+
+      - name: Publish GitHub Release (on tag)
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          generate_release_notes: true
+          files: |
+            dist/DjaelYTPlaylistDWNLD-Setup-*.exe
+            dist/DjaelYTPlaylistDWNLD-win64-portable.zip
+            dist/SHA256SUMS.txt

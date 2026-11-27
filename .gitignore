@@ -1,18 +1,18 @@
 # Virtual environment
 .venv/
 
-# PyInstaller intermediate and final files
+# PyInstaller intermediate and final outputs
 build/
 dist/
-*.spec
 
 # Large binaries
 ffmpeg.exe
 ffprobe.exe
 
-# Temporary files and configs
+# Temporary files, logs and local configs
 config.json
 *.log
 *.zip
 *.tmp
 __pycache__/
+.pytest_cache/

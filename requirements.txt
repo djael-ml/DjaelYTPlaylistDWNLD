@@ -1,7 +1,8 @@
-SpotipyFree
-websockets
-ytmusicapi
-yt-dlp
-mutagen
-customtkinter
-requests
+SpotipyFree>=1.9.0
+websockets>=12.0
+ytmusicapi>=1.8.0
+yt-dlp>=2024.12.0
+mutagen>=1.47.0
+customtkinter>=5.2.0
+Pillow>=10.0.0
+requests>=2.31.0
